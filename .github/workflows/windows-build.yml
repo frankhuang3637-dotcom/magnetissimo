@@ -48,13 +48,13 @@ jobs:
             -RedirectStandardError "$env:RUNNER_TEMP\magnetissimo-err.log" `
             -PassThru
 
-          try {
-            for ($attempt = 0; $attempt -lt 30; $attempt++) {
-              if ($server.HasExited) { break }
-              try {
-                $response = Invoke-WebRequest 'http://127.0.0.1:4000/' -TimeoutSec 3
+                       try {
+                $response = Invoke-WebRequest 'http://[::1]:4000/' -NoProxy -TimeoutSec 3
                 if ($response.StatusCode -eq 200) { return }
               } catch {
+                Write-Host "HTTP check failed: $($_.Exception.Message)"
+                Start-Sleep -Seconds 2
+              }catch {
                 Start-Sleep -Seconds 2
               }
             }
