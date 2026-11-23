@@ -1,0 +1,68 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      MIX_ENV: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '29.1.1'
+          elixir-version: '1.20.4'
+
+      - name: Build Windows release
+        shell: pwsh
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get --only prod
+          mix assets.setup
+          mix assets.deploy
+          mix release
+
+      - name: Check search page starts
+        shell: pwsh
+        run: |
+          $release = Join-Path $PWD '_build/prod/rel/magnetissimo/bin/magnetissimo.bat'
+          if (-not (Test-Path $release)) {
+            throw "Windows release script was not generated: $release"
+          }
+
+          $env:DATABASE_PATH = Join-Path $env:RUNNER_TEMP 'magnetissimo.db'
+          $env:PHX_SERVER = 'true'
+          $env:PORT = '4000'
+
+          $server = Start-Process -FilePath $env:ComSpec `
+            -ArgumentList ('/d /c ""{0}" start"' -f $release) `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\magnetissimo-out.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\magnetissimo-err.log" `
+            -PassThru
+
+          try {
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              if ($server.HasExited) { break }
+              try {
+                $response = Invoke-WebRequest 'http://127.0.0.1:4000/' -TimeoutSec 3
+                if ($response.StatusCode -eq 200) { return }
+              } catch {
+                Start-Sleep -Seconds 2
+              }
+            }
+            Get-Content "$env:RUNNER_TEMP\magnetissimo-out.log"
+            Get-Content "$env:RUNNER_TEMP\magnetissimo-err.log"
+            throw 'The search page did not start.'
+          } finally {
+            if (-not $server.HasExited) {
+              taskkill.exe /PID $server.Id /T /F
+            }
+          }
